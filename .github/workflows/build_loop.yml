@@ -207,6 +207,16 @@ jobs:
           # Several patches may be added per submodule.
           # Adding comments (#) may be useful to easily tell the individual patches apart.
 
+
+          # === Loop and Learn customizations (added 2026-07-18 for O5 rebuild) ===
+          #   now_line | low_carb_limit | basal_lock | no_auth (DISABLES bolus/settings Face-ID/passcode auth)
+          /bin/bash -c "$(curl -fsSL \
+          https://raw.githubusercontent.com/loopandlearn/lnl-scripts/main/CustomizationSelect.sh)" \
+          now_line \
+          low_carb_limit \
+          basal_lock \
+          no_auth
+
       # Patch Fastlane Match to not print tables
       - name: Patch Match Tables
         run: |
