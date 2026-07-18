@@ -216,9 +216,9 @@ jobs:
           basal_lock \
           no_auth
           # Custom carb limits (Brian 2026-07-18): warn 125g, block 200g -- replaces low_carb_limit preset
-          sed -i '' 's/maxCarbEntryQuantity = LoopQuantity(unit: .gram, doubleValue: 250)/maxCarbEntryQuantity = LoopQuantity(unit: .gram, doubleValue: 200)/' Loop/Loop/Models/LoopConstants.swift
-          sed -i '' 's/warningCarbEntryQuantity = LoopQuantity(unit: .gram, doubleValue: 99)/warningCarbEntryQuantity = LoopQuantity(unit: .gram, doubleValue: 125)/' Loop/Loop/Models/LoopConstants.swift
-          echo "Carb limits set ->"; grep -E "maxCarbEntryQuantity|warningCarbEntryQuantity" Loop/Loop/Models/LoopConstants.swift
+          find . -name LoopConstants.swift -exec sed -i '' 's/maxCarbEntryQuantity = HKQuantity(unit: .gram(), doubleValue: 250)/maxCarbEntryQuantity = HKQuantity(unit: .gram(), doubleValue: 200)/' {} +
+          find . -name LoopConstants.swift -exec sed -i '' 's/warningCarbEntryQuantity = HKQuantity(unit: .gram(), doubleValue: 99)/warningCarbEntryQuantity = HKQuantity(unit: .gram(), doubleValue: 125)/' {} +
+          echo "Carb limits set ->"; grep -rE "maxCarbEntryQuantity|warningCarbEntryQuantity" --include=LoopConstants.swift .
 
       # === Customization drift guard (added 2026-07-18): fail the build loudly if any
       #     customization did NOT apply, so an upstream change can never silently revert functionality ===
