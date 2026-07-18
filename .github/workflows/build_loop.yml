@@ -209,13 +209,32 @@ jobs:
 
 
           # === Loop and Learn customizations (added 2026-07-18 for O5 rebuild) ===
-          #   now_line | low_carb_limit | basal_lock | no_auth (DISABLES bolus/settings Face-ID/passcode auth)
+          #   now_line | basal_lock | no_auth (DISABLES bolus/settings auth) + custom carb (warn 125 / block 200)
           /bin/bash -c "$(curl -fsSL \
           https://raw.githubusercontent.com/loopandlearn/lnl-scripts/main/CustomizationSelect.sh)" \
           now_line \
-          low_carb_limit \
           basal_lock \
           no_auth
+          # Custom carb limits (Brian 2026-07-18): warn 125g, block 200g -- replaces low_carb_limit preset
+          sed -i '' 's/maxCarbEntryQuantity = LoopQuantity(unit: .gram, doubleValue: 250)/maxCarbEntryQuantity = LoopQuantity(unit: .gram, doubleValue: 200)/' Loop/Loop/Models/LoopConstants.swift
+          sed -i '' 's/warningCarbEntryQuantity = LoopQuantity(unit: .gram, doubleValue: 99)/warningCarbEntryQuantity = LoopQuantity(unit: .gram, doubleValue: 125)/' Loop/Loop/Models/LoopConstants.swift
+          echo "Carb limits set ->"; grep -E "maxCarbEntryQuantity|warningCarbEntryQuantity" Loop/Loop/Models/LoopConstants.swift
+
+      # === Customization drift guard (added 2026-07-18): fail the build loudly if any
+      #     customization did NOT apply, so an upstream change can never silently revert functionality ===
+      - name: Verify Customizations
+        run: |
+          echo "== Verifying customizations landed (guards vs upstream drift) =="
+          fail=0
+          check() { if grep -rq --include="$3" "$1" . 2>/dev/null; then echo "OK  : $2"; else echo "::error::MISSING: $2 -- customization did NOT apply (upstream likely changed the patched code)"; fail=1; fi; }
+          check 'doubleValue: 200) // cannot exceed' 'carb block 200g' '*.swift'
+          check 'doubleValue: 125) // user is warned' 'carb warn 125g' '*.swift'
+          check 'currentTimeLayer' 'now_line (current-time chart line)' '*.swift'
+          check 'false && context.canEvaluatePolicy' 'no_auth (bolus/settings auth disabled)' '*.swift'
+          check 'DDC065132B65871E0033FD88' 'basal_lock (Preferences row)' '*.pbxproj'
+          if [ "$fail" = "1" ]; then echo "::error::A customization did NOT apply -- failing build on purpose so a silent functionality change never ships."; exit 1; fi
+          echo "All customizations verified present."
+
 
       # Patch Fastlane Match to not print tables
       - name: Patch Match Tables
