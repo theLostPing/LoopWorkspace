@@ -219,6 +219,9 @@ jobs:
           find . -name LoopConstants.swift -exec sed -i '' 's/maxCarbEntryQuantity = HKQuantity(unit: .gram(), doubleValue: 250)/maxCarbEntryQuantity = HKQuantity(unit: .gram(), doubleValue: 200)/' {} +
           find . -name LoopConstants.swift -exec sed -i '' 's/warningCarbEntryQuantity = HKQuantity(unit: .gram(), doubleValue: 99)/warningCarbEntryQuantity = HKQuantity(unit: .gram(), doubleValue: 125)/' {} +
           echo "Carb limits set ->"; grep -rE "maxCarbEntryQuantity|warningCarbEntryQuantity" --include=LoopConstants.swift .
+          # Disable the dev-branch "Im a tester" popup (DevelopmentBranchAlerter) by commenting out its launch call
+          find . -name LoopAppManager.swift -exec sed -i '' 's|DevelopmentBranchAlerter.alertIfNeeded(viewControllerToPresentFrom: rootViewController)|// TESTERPOPUP_DISABLED DevelopmentBranchAlerter.alertIfNeeded(viewControllerToPresentFrom: rootViewController)|' {} +
+          echo "Tester popup ->"; grep -rn "TESTERPOPUP_DISABLED" --include=LoopAppManager.swift .
 
       # === Customization drift guard (added 2026-07-18): fail the build loudly if any
       #     customization did NOT apply, so an upstream change can never silently revert functionality ===
@@ -232,6 +235,7 @@ jobs:
           check 'currentTimeLayer' 'now_line (current-time chart line)' '*.swift'
           check 'false && context.canEvaluatePolicy' 'no_auth (bolus/settings auth disabled)' '*.swift'
           check 'DDC065132B65871E0033FD88' 'basal_lock (Preferences row)' '*.pbxproj'
+          check 'TESTERPOPUP_DISABLED' 'no-tester-popup (dev-branch warning off)' '*.swift'
           if [ "$fail" = "1" ]; then echo "::error::A customization did NOT apply -- failing build on purpose so a silent functionality change never ships."; exit 1; fi
           echo "All customizations verified present."
 
