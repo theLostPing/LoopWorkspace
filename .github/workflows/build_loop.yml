@@ -222,6 +222,11 @@ jobs:
           # Disable the dev-branch "Im a tester" popup (DevelopmentBranchAlerter) by commenting out its launch call
           find . -name LoopAppManager.swift -exec sed -i '' 's|DevelopmentBranchAlerter.alertIfNeeded(viewControllerToPresentFrom: rootViewController)|// TESTERPOPUP_DISABLED DevelopmentBranchAlerter.alertIfNeeded(viewControllerToPresentFrom: rootViewController)|' {} +
           echo "Tester popup ->"; grep -rn "TESTERPOPUP_DISABLED" --include=LoopAppManager.swift .
+          # aps-environment -> production (Brian 2026-07-19): TestFlight = App Store distribution and
+          # requires PRODUCTION push. The dev branch ships aps-environment=development, which orphans the
+          # APNs token on TestFlight infra -> Loop remote commands / Nightscout remote carbs silently fail.
+          find . -name "Loop.entitlements" -exec sed -i '' 's|<string>development</string>|<string>production</string>|' {} +
+          echo "aps-environment ->"; grep -rn -A1 "aps-environment" --include="Loop.entitlements" .
 
       # === Customization drift guard (added 2026-07-18): fail the build loudly if any
       #     customization did NOT apply, so an upstream change can never silently revert functionality ===
@@ -236,6 +241,7 @@ jobs:
           check 'false && context.canEvaluatePolicy' 'no_auth (bolus/settings auth disabled)' '*.swift'
           check 'DDC065132B65871E0033FD88' 'basal_lock (Preferences row)' '*.pbxproj'
           check 'TESTERPOPUP_DISABLED' 'no-tester-popup (dev-branch warning off)' '*.swift'
+          if grep -rq "<string>development</string>" --include="*.entitlements" . 2>/dev/null; then echo "::error::MISSING: aps-environment=production -- an entitlements file still says development (TestFlight remote-command push will break)"; fail=1; else echo "OK  : aps-environment=production (TestFlight remote-command push)"; fi
           if [ "$fail" = "1" ]; then echo "::error::A customization did NOT apply -- failing build on purpose so a silent functionality change never ships."; exit 1; fi
           echo "All customizations verified present."
 
