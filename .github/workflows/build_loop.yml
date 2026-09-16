@@ -195,6 +195,18 @@ jobs:
           # Remove the "#" sign from the beginning of the line below to activate:
           #curl https://github.com/loopnlearn/Loop/commit/d206432b024279ef710df462b20bd464cd9682d4.patch | git apply --directory=Loop -v --whitespace=fix
 
+          # === TEMPORARY upstream patch (added 2026-09-16) ===
+          # LoopKit/Loop#2515 (dd761e85): make the five status-screen toolbar items real
+          # UIBarButtonItems instead of custom views. v3.14.7 (#2504) padded every icon to a
+          # 60x44pt canvas, so on narrow phones (375pt and below) the Liquid Glass pill overruns
+          # both screen edges - gear clipped - and on iOS 27 UIKit collapses the tail into a '...'
+          # overflow menu that renders EMPTY for custom-view items, making Settings unreachable
+          # in portrait. Fix is not yet in LoopWorkspace's Loop submodule pin.
+          # >>> REMOVE THIS at the next upstream sync, once the pin moves past dd761e85.
+          #     git apply fails loudly if the commit is already in tree, so the build will tell you.
+          curl -fsSL https://github.com/LoopKit/Loop/commit/dd761e85.patch | git apply --directory=Loop -v --whitespace=fix
+          echo "toolbar fix #2515 ->"; grep -rn "makeToolbarItem" --include=StatusTableViewController.swift . | head -3
+
           # Submodule LoopKit patches:
           # General template for customizing submodule LoopKit 
           # Copy url from a GitHub commit or pull request and insert below, and remove the "#" sign from the beginning of the line to activate:
@@ -241,6 +253,7 @@ jobs:
           check 'false && context.canEvaluatePolicy' 'no_auth (bolus/settings auth disabled)' '*.swift'
           check 'DDC065132B65871E0033FD88' 'basal_lock (Preferences row)' '*.pbxproj'
           check 'TESTERPOPUP_DISABLED' 'no-tester-popup (dev-branch warning off)' '*.swift'
+          check 'makeToolbarItem' 'toolbar fix #2515 (bar fits narrow screens)' '*.swift'
           if grep -rq "<string>development</string>" --include="*.entitlements" . 2>/dev/null; then echo "::error::MISSING: aps-environment=production -- an entitlements file still says development (TestFlight remote-command push will break)"; fail=1; else echo "OK  : aps-environment=production (TestFlight remote-command push)"; fi
           if [ "$fail" = "1" ]; then echo "::error::A customization did NOT apply -- failing build on purpose so a silent functionality change never ships."; exit 1; fi
           echo "All customizations verified present."
