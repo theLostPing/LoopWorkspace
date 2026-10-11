@@ -227,6 +227,15 @@ jobs:
           # APNs token on TestFlight infra -> Loop remote commands / Nightscout remote carbs silently fail.
           find . -name "Loop.entitlements" -exec sed -i '' 's|<string>development</string>|<string>production</string>|' {} +
           echo "aps-environment ->"; grep -rn -A1 "aps-environment" --include="Loop.entitlements" .
+          # Pod fill instruction U-100 -> U-200 (Brian 2026-10-11). LABEL TEXT ONLY.
+          # He has been running U-200 in his pods for a long time with his therapy settings
+          # already compensated for it, so the stock screen tells him the wrong thing at the
+          # one moment it matters -- filling a fresh pod. This touches NOTHING but the two
+          # instruction strings in PairPodView.swift: no math, no insulin model, no unit
+          # labels beside dose numbers, no concentration handling (OmnipodKit/LoopKit have
+          # no concentration support at all -- `insulinConcentration` appears nowhere).
+          find . -name PairPodView.swift -exec sed -i '' 's/with U-100 Insulin/with U-200 Insulin/g' {} +
+          echo "pod fill text ->"; grep -rn "U-200 Insulin\|U-100 Insulin" --include=PairPodView.swift .
 
       # === Customization drift guard (added 2026-07-18): fail the build loudly if any
       #     customization did NOT apply, so an upstream change can never silently revert functionality ===
@@ -241,6 +250,7 @@ jobs:
           check 'false && context.canEvaluatePolicy' 'no_auth (bolus/settings auth disabled)' '*.swift'
           check 'DDC065132B65871E0033FD88' 'basal_lock (Preferences row)' '*.pbxproj'
           check 'TESTERPOPUP_DISABLED' 'no-tester-popup (dev-branch warning off)' '*.swift'
+          check 'with U-200 Insulin' 'pod fill text says U-200' '*.swift'
           if grep -rq "<string>development</string>" --include="*.entitlements" . 2>/dev/null; then echo "::error::MISSING: aps-environment=production -- an entitlements file still says development (TestFlight remote-command push will break)"; fail=1; else echo "OK  : aps-environment=production (TestFlight remote-command push)"; fi
           if [ "$fail" = "1" ]; then echo "::error::A customization did NOT apply -- failing build on purpose so a silent functionality change never ships."; exit 1; fi
           echo "All customizations verified present."
