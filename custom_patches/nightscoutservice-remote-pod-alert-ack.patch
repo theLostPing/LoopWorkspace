@@ -1,0 +1,125 @@
+--- a/NightscoutServiceKit/RemoteCommands/Actions/Action.swift
++++ b/NightscoutServiceKit/RemoteCommands/Actions/Action.swift
+@@ -13,6 +13,7 @@
+     case cancelTemporaryOverride(OverrideCancelAction)
+     case bolusEntry(BolusAction)
+     case carbsEntry(CarbAction)
++    case acknowledgePodAlerts(PodAlertAcknowledgeAction)
+     
+     public var description: String {
+         return "\(actionName) \(actionParameterDescription)"
+@@ -28,6 +29,8 @@
+             return LocalizedString("Cancel Override", comment: "The remote action name for Cancel Override")
+         case .temporaryScheduleOverride:
+             return LocalizedString("Override", comment: "The remote action name for Override")
++        case .acknowledgePodAlerts:
++            return LocalizedString("Clear Pod Alerts", comment: "The remote action name for acknowledging advisory pod alerts")
+         }
+     }
+     
+@@ -43,6 +46,8 @@
+             return ""
+         case .temporaryScheduleOverride(let overrideAction):
+             return overrideAction.name
++        case .acknowledgePodAlerts:
++            return ""
+         }
+     }
+     
+@@ -60,3 +65,18 @@
+         return formatter
+     }()
+ }
++
++/// Payload for a remote request to acknowledge outstanding ADVISORY pod alerts.
++///
++/// Carries no parameters by design: the HOST owns the list of alerts that may be
++/// cleared this way, so a remote caller cannot name an alert and cannot widen the
++/// set. Nothing here can suppress an alert -- alerts still fire normally; this only
++/// acknowledges ones that have already fired.
++public struct PodAlertAcknowledgeAction: Codable {
++
++    let remoteAddress: String
++
++    public init(remoteAddress: String) {
++        self.remoteAddress = remoteAddress
++    }
++}
+--- a/NightscoutServiceKit/RemoteCommands/V1/Notifications/RemoteNotification.swift
++++ b/NightscoutServiceKit/RemoteCommands/V1/Notifications/RemoteNotification.swift
+@@ -108,8 +108,50 @@
+             return try OverrideRemoteNotification(dictionary: self)
+         } else if OverrideCancelRemoteNotification.includedInNotification(self) {
+             return try OverrideCancelRemoteNotification(dictionary: self)
++        } else if PodAlertAcknowledgeRemoteNotification.includedInNotification(self) {
++            return try PodAlertAcknowledgeRemoteNotification(dictionary: self)
+         } else {
+             throw RemoteNotificationError.unhandledNotification(self)
+         }
+     }
+ }
++
++/// Remote notification asking the app to clear outstanding ADVISORY pod alerts.
++///
++/// Wire shape mirrors OverrideCancelRemoteNotification: keyed by the presence of
++/// "acknowledge-pod-alerts", no parameters, no OTP. No OTP matches cancel-override,
++/// the closest existing precedent, which affects therapy -- this cannot: it
++/// acknowledges reminders that have already sounded, and nothing else.
++public struct PodAlertAcknowledgeRemoteNotification: RemoteNotification, Codable {
++
++    public let remoteAddress: String
++    public let expiration: Date?
++    public let sentAt: Date?
++    public let acknowledgePodAlerts: String
++    public let enteredBy: String?
++    public let otp: String?
++    public let encryptedReturnNotification: String?
++
++    enum CodingKeys: String, CodingKey {
++        case remoteAddress = "remote-address"
++        case expiration = "expiration"
++        case sentAt = "sent-at"
++        case acknowledgePodAlerts = "acknowledge-pod-alerts"
++        case enteredBy = "entered-by"
++        case otp = "otp"
++        case encryptedReturnNotification = "encrypted_return_notification"
++    }
++
++    func toRemoteAction() -> Action {
++        let action = PodAlertAcknowledgeAction(remoteAddress: remoteAddress)
++        return .acknowledgePodAlerts(action)
++    }
++
++    func otpValidationRequired() -> Bool {
++        return false
++    }
++
++    public static func includedInNotification(_ notification: [String: Any]) -> Bool {
++        return notification["acknowledge-pod-alerts"] != nil
++    }
++}
+--- a/NightscoutServiceKit/NightscoutService.swift
++++ b/NightscoutServiceKit/NightscoutService.swift
+@@ -458,6 +458,12 @@
+                 )
+                 success = true
+                 message = String(format: "Carbs entry of %.1f g delivered successfully", carbCommand.amountInGrams)
++
++            case .acknowledgePodAlerts:
++                commandType = .acknowledgePodAlerts
++                try await self.serviceDelegate?.acknowledgeRemotePodAlerts()
++                success = true
++                message = "Pod alerts cleared successfully"
+             }
+         } catch {
+             message = "Command failed: \(error.localizedDescription)"
+--- a/NightscoutServiceKit/RemoteCommands/RemoteNotificationResponseManager.swift
++++ b/NightscoutServiceKit/RemoteCommands/RemoteNotificationResponseManager.swift
+@@ -45,6 +45,7 @@
+         case carbs = "carbs"
+         case override = "override"
+         case cancelOverride = "cancel_override"
++        case acknowledgePodAlerts = "acknowledge_pod_alerts"
+     }
+     
+     func sendResponseNotification(

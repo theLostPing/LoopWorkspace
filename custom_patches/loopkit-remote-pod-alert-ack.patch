@@ -1,0 +1,39 @@
+--- a/LoopKit/Service/Remote/RemoteActionDelegate.swift
++++ b/LoopKit/Service/Remote/RemoteActionDelegate.swift
+@@ -13,4 +13,36 @@
+     func cancelRemoteOverride() async throws
+     func deliverRemoteCarbs(amountInGrams: Double, absorptionTime: TimeInterval?, foodType: String?, startDate: Date?) async throws
+     func deliverRemoteBolus(amountInUnits: Double) async throws
++
++    /// Acknowledge outstanding ADVISORY pump alerts (pod expiration reminders, low
++    /// reservoir) remotely, so they can be silenced hands-free.
++    ///
++    /// This does NOT suppress, delay or reconfigure any alert -- the alert fires
++    /// normally. This only clears one that has ALREADY fired, exactly as tapping the
++    /// on-screen acknowledgement button does.
++    ///
++    /// The host owns the list of eligible alerts; a caller cannot name one. Hazard
++    /// conditions must never be acknowledgeable through this path.
++    func acknowledgeRemotePodAlerts() async throws
+ }
++
++public extension RemoteActionDelegate {
++
++    /// Default implementation so hosts that do not support remote alert
++    /// acknowledgement keep compiling, and fail loudly at runtime instead.
++    func acknowledgeRemotePodAlerts() async throws {
++        throw RemoteActionDelegateError.actionNotSupportedByHost
++    }
++}
++
++public enum RemoteActionDelegateError: LocalizedError {
++
++    case actionNotSupportedByHost
++
++    public var errorDescription: String? {
++        switch self {
++        case .actionNotSupportedByHost:
++            return NSLocalizedString("This remote action is not supported by this app", comment: "Remote action error description: the host app does not implement the requested action.")
++        }
++    }
++}

@@ -237,6 +237,34 @@ jobs:
           find . -name PairPodView.swift -exec sed -i '' 's/with U-100 Insulin/with U-200 Insulin/g' {} +
           echo "pod fill text ->"; grep -rn "U-200 Insulin\|U-100 Insulin" --include=PairPodView.swift .
 
+          # === Remote acknowledge of ADVISORY pod alerts (Brian 2026-10-29) ===
+          # Lets him clear a pod expiration reminder / low-reservoir alert by VOICE
+          # (Warden -> Nightscout -> APNs -> Loop) without unlocking the phone -- from
+          # bed, or while driving. Brian: "I don't wanna have to unlock my phone when
+          # I'm driving to hit the button, or I wanna roll over in the middle of the
+          # night and just send a voice that says please shut that thing off."
+          #
+          # The alerts STILL FIRE, unchanged. This only acknowledges one that has
+          # already fired, doing exactly what the on-screen acknowledgement button
+          # does: AlertManager.acknowledgeAlert(identifier:) -> pump manager clears the
+          # pod's alert slot (stops the pod beeping) + clears the iOS notification +
+          # records the acknowledgement.
+          #
+          # SAFETY: the allowlist lives in Loop/Managers/ServicesManager.swift and is
+          # four ADVISORY identifiers only -- userPodExpiration, podExpiring,
+          # podExpireImminent, lowReservoir. Pod FAULTS (occlusion, pod fault, the real
+          # 80-hour auto-off shutdown) are PodCommsError.podFault and never become a
+          # PumpManagerAlert at all, so no hazard is reachable from this path under any
+          # input. Widening that list is a therapy-safety decision, not a refactor.
+          #
+          # Kept in custom_patches/ and deliberately NOT in patches/: the upstream
+          # patches/ block applies its glob with no --directory, and these paths live
+          # inside submodules. --directory= is the proven route (toolbar fix, build 19).
+          git apply --directory=LoopKit           -v --whitespace=fix ./custom_patches/loopkit-remote-pod-alert-ack.patch
+          git apply --directory=NightscoutService -v --whitespace=fix ./custom_patches/nightscoutservice-remote-pod-alert-ack.patch
+          git apply --directory=Loop              -v --whitespace=fix ./custom_patches/loop-remote-pod-alert-ack.patch
+          echo "remote pod alert ack ->"; grep -rln "acknowledgeRemotePodAlerts" --include=*.swift .
+
       # === Customization drift guard (added 2026-07-18): fail the build loudly if any
       #     customization did NOT apply, so an upstream change can never silently revert functionality ===
       - name: Verify Customizations
@@ -251,6 +279,9 @@ jobs:
           check 'DDC065132B65871E0033FD88' 'basal_lock (Preferences row)' '*.pbxproj'
           check 'TESTERPOPUP_DISABLED' 'no-tester-popup (dev-branch warning off)' '*.swift'
           check 'with U-200 Insulin' 'pod fill text says U-200' '*.swift'
+          check 'acknowledgeRemotePodAlerts' 'remote pod-alert ack (protocol + impl)' '*.swift'
+          check 'acknowledge-pod-alerts' 'remote pod-alert ack (Nightscout wire key)' '*.swift'
+          check 'remoteAcknowledgeablePodAlertIdentifiers' 'remote pod-alert ack (advisory allowlist)' '*.swift'
           if grep -rq "<string>development</string>" --include="*.entitlements" . 2>/dev/null; then echo "::error::MISSING: aps-environment=production -- an entitlements file still says development (TestFlight remote-command push will break)"; fail=1; else echo "OK  : aps-environment=production (TestFlight remote-command push)"; fi
           if [ "$fail" = "1" ]; then echo "::error::A customization did NOT apply -- failing build on purpose so a silent functionality change never ships."; exit 1; fi
           echo "All customizations verified present."

@@ -1,0 +1,89 @@
+--- a/Loop/Managers/ServicesManager.swift
++++ b/Loop/Managers/ServicesManager.swift
+@@ -354,6 +354,86 @@
+         }
+     }
+     
++    // MARK: - Hands-free advisory pod alert acknowledgement (Brian, 2026-10-29)
++    //
++    // Lets an outstanding Omnipod ADVISORY alert be cleared by voice (Warden ->
++    // Nightscout -> APNs) without unlocking the phone -- from bed, or while driving.
++    //
++    // This does NOT silence, suppress, delay or reconfigure any alert. Every alert
++    // still fires exactly as it does today. This runs AFTER an alert has fired and
++    // does precisely what tapping the on-screen acknowledgement button does: it calls
++    // AlertManager.acknowledgeAlert(identifier:), which forwards to the pump manager
++    // (clearing the pod's own alert slot, which stops the pod beeping), clears the
++    // iOS notification, and records the acknowledgement in the alert store.
++    //
++    // SAFETY -- the allowlist below is the entire safety property:
++    //   * Only these four ADVISORY alerts can ever be cleared remotely.
++    //   * Every other alert an Omnipod can raise is excluded by omission:
++    //     suspendInProgress, suspendEnded, finishSetupReminder, unexpectedAlert,
++    //     timeOffsetChangeDetected.
++    //   * Pod FAULTS -- occlusion, pod fault, the real 80-hour auto-off shutdown --
++    //     are PodCommsError.podFault and never become a PumpManagerAlert at all, so
++    //     they are unreachable from this code path under any input. The boundary this
++    //     method enforces is the same one OmniBLE already draws between configurable
++    //     alert slots and faults.
++    // Changing this list is a therapy-safety decision, not a refactor.
++    private static let remoteAcknowledgeablePodAlertIdentifiers: Set<String> = [
++        "userPodExpiration",    // slot3 -- pod expiration reminder
++        "podExpiring",          // slot7 -- pod expired
++        "podExpireImminent",    // slot2 -- shutdown imminent (advisory)
++        "lowReservoir"          // slot4 -- low reservoir
++    ]
++
++    // OmniBLEPumpManager.pluginIdentifier. Verified against OmniBLE@dev, not assumed:
++    // a wrong value here would make this feature silently find zero alerts.
++    private static let omnipodDashManagerIdentifier = "Omnipod-Dash"
++
++    private static let repeatingAlertSuffix = "-repeating"
++
++    func acknowledgeRemotePodAlerts() async throws {
++
++        let persistedAlerts: [PersistedAlert] = try await withCheckedThrowingContinuation { continuation in
++            alertManager.lookupAllUnacknowledgedUnretracted(managerIdentifier: Self.omnipodDashManagerIdentifier) { result in
++                continuation.resume(with: result)
++            }
++        }
++
++        // An alert with a repeatInterval is issued under BOTH "<id>" and
++        // "<id>-repeating". Acknowledge whichever are outstanding -- clearing only the
++        // base identifier would leave the repeating notification scheduled and still
++        // buzzing. None of the four allowlisted alerts repeats today; this keeps the
++        // behaviour correct if upstream gives one a repeatInterval later.
++        let targets = persistedAlerts.filter { persisted in
++            let identifier = persisted.alert.identifier.alertIdentifier
++            let base = identifier.hasSuffix(Self.repeatingAlertSuffix)
++                ? String(identifier.dropLast(Self.repeatingAlertSuffix.count))
++                : identifier
++            return Self.remoteAcknowledgeablePodAlertIdentifiers.contains(base)
++        }
++
++        guard !targets.isEmpty else {
++            log.default("Remote pod alert acknowledgement: nothing clearable outstanding")
++            throw PodAlertAcknowledgementError.noAcknowledgeableAlerts
++        }
++
++        for target in targets {
++            log.default("Remote pod alert acknowledgement: clearing %{public}@", target.alert.identifier.alertIdentifier)
++            alertManager.acknowledgeAlert(identifier: target.alert.identifier)
++        }
++    }
++
++    enum PodAlertAcknowledgementError: LocalizedError {
++
++        case noAcknowledgeableAlerts
++
++        var errorDescription: String? {
++            switch self {
++            case .noAcknowledgeableAlerts:
++                return NSLocalizedString("No pod alerts to clear", comment: "Pod alert acknowledgement error description: no clearable pod alerts are outstanding.")
++            }
++        }
++    }
++
+     enum BolusActionError: LocalizedError {
+         
+         case invalidBolus
