@@ -284,6 +284,23 @@ jobs:
           # gate compares it with PHP version_compare -- a "-tlp.N" marketing version would sort
           # BELOW a plain number and jam that gate shut. The personal version lives in BrianBuild
           # in SettingsView.swift instead; bump BrianBuild.version on every release.
+          # >>> TEMPORARY DIAGNOSTIC (2026-11-01) - remove once the What's New patch applies.
+          # Three builds failed with 'patch does not apply' at SettingsView.swift:50 while the
+          # byte-identical patch applied to the byte-identical pinned blob locally. Stop
+          # guessing: print what the runner actually has.
+          echo "=== DIAG: SettingsView.swift as the runner sees it ==="
+          shasum -a 256 Loop/Loop/Views/SettingsView.swift || true
+          echo "expected   9c7de430cf0fd5caa27901259d92d4df48093e61e16c918fbbd9a1912505501c"
+          echo "line count: $(wc -l < Loop/Loop/Views/SettingsView.swift) (expected 700)"
+          echo "--- lines 45-58, cat -A ---"
+          sed -n '45,58p' Loop/Loop/Views/SettingsView.swift | cat -A
+          echo "=== DIAG: the patch file as the runner sees it ==="
+          shasum -a 256 ./custom_patches/loop-version-and-whats-new.patch || true
+          echo "expected   90bd425694a6ce1152b820016ed4e32e7fefcae3cc3dfb95c7be2fdb54b7967e"
+          echo "--- patch lines 1-12, cat -A ---"
+          sed -n '1,12p' ./custom_patches/loop-version-and-whats-new.patch | cat -A
+          echo "=== DIAG: git version ==="; git --version
+          echo "=== DIAG end ==="
           git apply --directory=Loop              -v --whitespace=nowarn --ignore-whitespace ./custom_patches/loop-version-and-whats-new.patch
           echo "personal version ->"; grep -rn 'static let version = ' --include=SettingsView.swift .
           echo "remote pod alert ack ->"; grep -rln "acknowledgeRemotePodAlerts" --include=*.swift .
