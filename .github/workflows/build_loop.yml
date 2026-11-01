@@ -260,9 +260,14 @@ jobs:
           # Kept in custom_patches/ and deliberately NOT in patches/: the upstream
           # patches/ block applies its glob with no --directory, and these paths live
           # inside submodules. --directory= is the proven route (toolbar fix, build 19).
-          git apply --directory=LoopKit           -v --whitespace=fix ./custom_patches/loopkit-remote-pod-alert-ack.patch
-          git apply --directory=NightscoutService -v --whitespace=fix ./custom_patches/nightscoutservice-remote-pod-alert-ack.patch
-          git apply --directory=Loop              -v --whitespace=fix ./custom_patches/loop-remote-pod-alert-ack.patch
+          # --whitespace=nowarn, NOT fix: these patches are generated from the pristine
+          # submodule blobs, so they must apply byte-exactly. With --whitespace=fix, git
+          # normalises whitespace-only CONTEXT lines before matching, and on the runner's
+          # git (2.56) that made SettingsView.swift fail to match while the same patch
+          # applied fine on git 2.52 locally. nowarn removes the whole class of problem.
+          git apply --directory=LoopKit           -v --whitespace=nowarn ./custom_patches/loopkit-remote-pod-alert-ack.patch
+          git apply --directory=NightscoutService -v --whitespace=nowarn ./custom_patches/nightscoutservice-remote-pod-alert-ack.patch
+          git apply --directory=Loop              -v --whitespace=nowarn ./custom_patches/loop-remote-pod-alert-ack.patch
 
           # === Personal version number + What's New sheet (Brian 2026-11-01) ===
           # Standing rule: every release gets a real user-visible version AND a once-per-version
@@ -271,7 +276,7 @@ jobs:
           # gate compares it with PHP version_compare -- a "-tlp.N" marketing version would sort
           # BELOW a plain number and jam that gate shut. The personal version lives in BrianBuild
           # in SettingsView.swift instead; bump BrianBuild.version on every release.
-          git apply --directory=Loop              -v --whitespace=fix ./custom_patches/loop-version-and-whats-new.patch
+          git apply --directory=Loop              -v --whitespace=nowarn ./custom_patches/loop-version-and-whats-new.patch
           echo "personal version ->"; grep -rn 'static let version = ' --include=SettingsView.swift .
           echo "remote pod alert ack ->"; grep -rln "acknowledgeRemotePodAlerts" --include=*.swift .
 
