@@ -26,6 +26,7 @@ so it can never conflict on a sync.
 | `loopkit-remote-pod-alert-ack.patch` | `LoopKit` | Adds `acknowledgeRemotePodAlerts()` to `RemoteActionDelegate`, with a default protocol-extension implementation so every other conformer still compiles. |
 | `nightscoutservice-remote-pod-alert-ack.patch` | `NightscoutService` | Carries the `acknowledge-pod-alerts` remote command end to end: `Action` case, `PodAlertAcknowledgeRemoteNotification`, dispatch, response `CommandType`. |
 | `loop-remote-pod-alert-ack.patch` | `Loop` | Implements it on `ServicesManager` — looks up unacknowledged Omnipod alerts, filters to the advisory allowlist, acknowledges each; **and** makes `AlertManager.acknowledgeAlert` dismiss an already-presented in-app modal. |
+| `loop-version-and-whats-new.patch` | `Loop` | Personal version (`BrianBuild.version`) plus a once-per-version What's New sheet on first launch after an update, re-openable from Settings. |
 
 New Swift types are deliberately added **inside existing files**. A new `.swift`
 file would need an edit to the submodule's `.xcodeproj` or it simply would not be
@@ -77,6 +78,28 @@ That is a no-op on the tap path, because `InAppModalAlertScheduler.show()` clear
 `alertsPresented` *before* calling back. Do **not** use `unscheduleAlert` there (it cancels pending
 timers and would break `suspendEnded`'s 15-minute repeat) or `retractAlert` (it writes a false
 retraction into the alert store).
+
+## Versioning: why the marketing version does NOT change
+
+Standing rule (11/01/26): every release ships a real user-visible version and a What's New.
+
+This is a **fork**, so `CFBundleShortVersionString` deliberately stays equal to the UPSTREAM Loop
+release it is built from. That number is what the Loop community, Loop's diagnostics and Nightscout
+all read; inventing a value there would misreport which Loop is running on a medical device.
+
+⚠️ It would also break the pod-alert gate. Nightscout's `loop.version` is literally
+`"<marketing>.<build>"`, and Warden compares it with PHP `version_compare`. Measured:
+
+```
+version_compare("3.14.11-tlp.1.25", "3.14.11.24", "<")  ->  TRUE   (gate refuses forever)
+version_compare("3.14.11.25",       "3.14.11.24", "<")  ->  false  (gate opens)
+```
+
+An unknown alphabetic segment sorts BELOW a plain number, so a `-tlp.N` marketing version jams the
+gate shut. The personal version lives in `BrianBuild` in `Loop/Views/SettingsView.swift` instead.
+
+**On every release: bump `BrianBuild.version` and replace `BrianBuild.whatsNew`.** One short plain
+line per item. The build number comes from TestFlight+1 automatically; it is not in the repo.
 
 ## Maintenance: these patches ROT
 
