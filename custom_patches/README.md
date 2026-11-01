@@ -25,7 +25,7 @@ so it can never conflict on a sync.
 |---|---|---|
 | `loopkit-remote-pod-alert-ack.patch` | `LoopKit` | Adds `acknowledgeRemotePodAlerts()` to `RemoteActionDelegate`, with a default protocol-extension implementation so every other conformer still compiles. |
 | `nightscoutservice-remote-pod-alert-ack.patch` | `NightscoutService` | Carries the `acknowledge-pod-alerts` remote command end to end: `Action` case, `PodAlertAcknowledgeRemoteNotification`, dispatch, response `CommandType`. |
-| `loop-remote-pod-alert-ack.patch` | `Loop` | Implements it on `ServicesManager` — looks up unacknowledged `Omnipod-Dash` alerts, filters to the advisory allowlist, and acknowledges each. |
+| `loop-remote-pod-alert-ack.patch` | `Loop` | Implements it on `ServicesManager` — looks up unacknowledged Omnipod alerts, filters to the advisory allowlist, acknowledges each; **and** makes `AlertManager.acknowledgeAlert` dismiss an already-presented in-app modal. |
 
 New Swift types are deliberately added **inside existing files**. A new `.swift`
 file would need an edit to the submodule's `.xcodeproj` or it simply would not be
@@ -52,6 +52,31 @@ Everything else is excluded by omission (`suspendInProgress`, `suspendEnded`,
 unreachable from this code path under any input.
 
 **Widening that list is a therapy-safety decision, not a refactor.**
+
+## 2026-11-01 fix — read this before touching the manager id
+
+This shipped on 10/29 querying one hardcoded `"Omnipod-Dash"`, which matched **nothing**, so every
+remote ack answered "No pod alerts to clear" while a Pod Expiration Reminder sat on screen.
+
+**This workspace builds `OmnipodKit` (loopandlearn/OmnipodKit)** — the single merged Omnipod
+submodule on `dev` — and its `OmniPumpManager.pluginIdentifier` is **`"Omni"`**. It is not
+OmniBLE (`"Omnipod-Dash"`, model `"Dash"`) and not OmniKit (`"Omnipod"`, model `"Eros"`).
+
+⚠️ The mistake worth not repeating: `.gitmodules` was read from the **default branch**, which
+lists OmniBLE/OmniKit/DanaKit. `dev` has an entirely different submodule set. Always pin the ref,
+and confirm with `git ls-tree origin/dev`. Independent check: Nightscout `pump.model` is
+`"Omnipod 5"`, which only `OmnipodKit` can produce (`state.podType.description`).
+
+The code now queries **all three** identifiers rather than one guess. That is safe because the real
+safety gate is the four-identifier allowlist, which is byte-identical across all three plugins.
+
+**Second fix, independent:** `AlertManager.acknowledgeAlert` never reached `modalAlertScheduler`
+(only `retractAlert` does), so a remote ack left the in-app modal on screen. It now calls
+`removePresentedAlert` on the **main queue** (`clearPresentedAlert` has a `dispatchPrecondition`).
+That is a no-op on the tap path, because `InAppModalAlertScheduler.show()` clears
+`alertsPresented` *before* calling back. Do **not** use `unscheduleAlert` there (it cancels pending
+timers and would break `suspendEnded`'s 15-minute repeat) or `retractAlert` (it writes a false
+retraction into the alert store).
 
 ## Maintenance: these patches ROT
 

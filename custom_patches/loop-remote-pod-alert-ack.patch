@@ -1,6 +1,6 @@
 --- a/Loop/Managers/ServicesManager.swift
 +++ b/Loop/Managers/ServicesManager.swift
-@@ -354,6 +354,86 @@
+@@ -354,6 +354,103 @@
          }
      }
      
@@ -11,10 +11,10 @@
 +    //
 +    // This does NOT silence, suppress, delay or reconfigure any alert. Every alert
 +    // still fires exactly as it does today. This runs AFTER an alert has fired and
-+    // does precisely what tapping the on-screen acknowledgement button does: it calls
++    // does what tapping the on-screen acknowledgement button does: it calls
 +    // AlertManager.acknowledgeAlert(identifier:), which forwards to the pump manager
-+    // (clearing the pod's own alert slot, which stops the pod beeping), clears the
-+    // iOS notification, and records the acknowledgement in the alert store.
++    // (clearing the pod's alert slot, which stops the pod beeping), clears the iOS
++    // notification, dismisses the in-app modal, and records the acknowledgement.
 +    //
 +    // SAFETY -- the allowlist below is the entire safety property:
 +    //   * Only these four ADVISORY alerts can ever be cleared remotely.
@@ -24,8 +24,8 @@
 +    //   * Pod FAULTS -- occlusion, pod fault, the real 80-hour auto-off shutdown --
 +    //     are PodCommsError.podFault and never become a PumpManagerAlert at all, so
 +    //     they are unreachable from this code path under any input. The boundary this
-+    //     method enforces is the same one OmniBLE already draws between configurable
-+    //     alert slots and faults.
++    //     method enforces is the same one the pod driver already draws between
++    //     configurable alert slots and faults.
 +    // Changing this list is a therapy-safety decision, not a refactor.
 +    private static let remoteAcknowledgeablePodAlertIdentifiers: Set<String> = [
 +        "userPodExpiration",    // slot3 -- pod expiration reminder
@@ -34,18 +34,33 @@
 +        "lowReservoir"          // slot4 -- low reservoir
 +    ]
 +
-+    // OmniBLEPumpManager.pluginIdentifier. Verified against OmniBLE@dev, not assumed:
-+    // a wrong value here would make this feature silently find zero alerts.
-+    private static let omnipodDashManagerIdentifier = "Omnipod-Dash"
++    // 2026-11-01 FIX. This shipped on 10/29 with a single hardcoded "Omnipod-Dash",
++    // which matched NOTHING: this workspace builds loopandlearn/OmnipodKit (the one
++    // merged Omnipod submodule on dev), whose OmniPumpManager.pluginIdentifier is
++    // "Omni". The lookup always came back empty, so every remote ack answered
++    // "No pod alerts to clear" while a Pod Expiration Reminder sat on screen.
++    //
++    // Query all three rather than one guess. This is safe because the REAL safety gate
++    // is the alert-identifier allowlist above, which is byte-identical across all three
++    // plugins -- and it makes a future submodule swap unable to silently break this.
++    private static let omnipodManagerIdentifiers = [
++        "Omni",          // loopandlearn/OmnipodKit -- what this workspace builds
++        "Omnipod-Dash",  // LoopKit/OmniBLE
++        "Omnipod"        // LoopKit/OmniKit
++    ]
 +
 +    private static let repeatingAlertSuffix = "-repeating"
 +
 +    func acknowledgeRemotePodAlerts() async throws {
 +
-+        let persistedAlerts: [PersistedAlert] = try await withCheckedThrowingContinuation { continuation in
-+            alertManager.lookupAllUnacknowledgedUnretracted(managerIdentifier: Self.omnipodDashManagerIdentifier) { result in
-+                continuation.resume(with: result)
++        var persistedAlerts: [PersistedAlert] = []
++        for managerIdentifier in Self.omnipodManagerIdentifiers {
++            let found: [PersistedAlert] = try await withCheckedThrowingContinuation { continuation in
++                alertManager.lookupAllUnacknowledgedUnretracted(managerIdentifier: managerIdentifier) { result in
++                    continuation.resume(with: result)
++                }
 +            }
++            persistedAlerts.append(contentsOf: found)
 +        }
 +
 +        // An alert with a repeatInterval is issued under BOTH "<id>" and
@@ -67,7 +82,9 @@
 +        }
 +
 +        for target in targets {
-+            log.default("Remote pod alert acknowledgement: clearing %{public}@", target.alert.identifier.alertIdentifier)
++            log.default("Remote pod alert acknowledgement: clearing %{public}@ (%{public}@)",
++                        target.alert.identifier.alertIdentifier,
++                        target.alert.identifier.managerIdentifier)
 +            alertManager.acknowledgeAlert(identifier: target.alert.identifier)
 +        }
 +    }
@@ -87,3 +104,32 @@
      enum BolusActionError: LocalizedError {
          
          case invalidBolus
+--- a/Loop/Managers/Alerts/AlertManager.swift
++++ b/Loop/Managers/Alerts/AlertManager.swift
+@@ -348,6 +348,26 @@
+         }
+         userNotificationAlertScheduler.acknowledgeAlert(identifier: identifier)
+         alertStore.recordAcknowledgement(of: identifier)
++
++        // REMOTE-ACK-DISMISS-MODAL (Brian, 2026-11-01)
++        // An alert acknowledged from OUTSIDE the UI -- the remote pod-alert ack -- can
++        // still have its in-app modal on screen. Nothing else in this method reaches
++        // modalAlertScheduler; only retractAlert does. Without this, a remote ack clears
++        // the pod, the notification and the store, and the user still stares at the modal.
++        //
++        // This is a NO-OP on the normal tap path: InAppModalAlertScheduler.show() calls
++        // clearPresentedAlert(identifier:) BEFORE calling back into us, so alertsPresented
++        // no longer holds the identifier and removePresentedAlert returns at its guard.
++        //
++        // Main queue is REQUIRED: removePresentedAlert -> clearPresentedAlert asserts
++        // dispatchPrecondition(condition: .onQueue(.main)).
++        //
++        // Deliberately NOT unscheduleAlert -- that also cancels PENDING timers, which would
++        // break the 15-minute repeat of suspendEnded. Deliberately NOT retractAlert -- that
++        // records a false "condition no longer applies" retraction in the alert store.
++        DispatchQueue.main.async { [weak self] in
++            self?.modalAlertScheduler.removePresentedAlert(identifier: identifier)
++        }
+     }
+     
+     func presentAcknowledgementFailedAlert(error: Error) {
