@@ -260,19 +260,11 @@ jobs:
           # Kept in custom_patches/ and deliberately NOT in patches/: the upstream
           # patches/ block applies its glob with no --directory, and these paths live
           # inside submodules. --directory= is the proven route (toolbar fix, build 19).
-          # --whitespace=nowarn --ignore-whitespace.
-          # These patches are generated from the pristine submodule blobs, so nothing should
-          # rewrite them; --whitespace=fix silently normalises them, which is never wanted.
-          #
-          # --ignore-whitespace is the one that actually matters. SettingsView.swift failed
-          # with 'patch does not apply' on the runner while the BYTE-IDENTICAL patch applied
-          # cleanly against the SAME pinned blob locally (Loop 7bb1749, verified against the
-          # GitHub blob), with the same flags. nowarn alone did NOT fix it, so it is not
-          # whitespace *warning* handling; it is how the runner's git (2.56 vs 2.52 locally)
-          # matches context containing whitespace-only lines -- SettingsView.swift has
-          # indented blank lines inside its Sheet enum, right where hunk 1 anchors.
-          # Matching leniently is safe here because the Verify Customizations step below is
-          # what actually proves every customization landed.
+          # --whitespace=nowarn --ignore-whitespace: these patches are generated from the
+          # pristine submodule blobs, so nothing should silently rewrite them, and context
+          # matching is kept lenient. (An earlier commit blamed these flags for the What's
+          # New failure -- that was wrong; the real cause was basal_lock editing the same
+          # lines, see the note further down.)
           git apply --directory=LoopKit           -v --whitespace=nowarn --ignore-whitespace ./custom_patches/loopkit-remote-pod-alert-ack.patch
           git apply --directory=NightscoutService -v --whitespace=nowarn --ignore-whitespace ./custom_patches/nightscoutservice-remote-pod-alert-ack.patch
           git apply --directory=Loop              -v --whitespace=nowarn --ignore-whitespace ./custom_patches/loop-remote-pod-alert-ack.patch
@@ -284,20 +276,13 @@ jobs:
           # gate compares it with PHP version_compare -- a "-tlp.N" marketing version would sort
           # BELOW a plain number and jam that gate shut. The personal version lives in BrianBuild
           # in SettingsView.swift instead; bump BrianBuild.version on every release.
-          # >>> TEMPORARY DIAGNOSTIC (2026-11-01) - remove once the What's New patch applies.
-          # The runner's SettingsView.swift is 716 lines, not the 700 in the pinned blob, so
-          # something is modifying it before this patch. Ask the submodule what.
-          echo "=== DIAG: Loop submodule state ==="
-          git -C Loop rev-parse HEAD || true
-          echo "expected 7bb17492288f6a6ea76e427277e2d82661dd0a3e"
-          echo "--- working tree changes inside the Loop submodule ---"
-          git -C Loop status --porcelain || true
-          echo "--- diffstat ---"
-          git -C Loop diff --stat || true
-          echo "--- what differs in SettingsView.swift vs its own HEAD ---"
-          git -C Loop diff -- Loop/Views/SettingsView.swift | head -60 || true
-          echo "=== DIAG end ==="
-          git apply --directory=Loop              -v --whitespace=nowarn --ignore-whitespace ./custom_patches/loop-version-and-whats-new.patch
+          # NOT a .patch: basal_lock (a Loop and Learn customization run above) inserts its
+          # own `case preferences` directly after `case favoriteFoods` in SettingsView.swift,
+          # which is exactly where a context diff for this feature anchors -- four builds
+          # failed that way. CustomizationSelect.sh is fetched unpinned from lnl-scripts@main,
+          # so it can move again. This script makes anchored single-string edits instead and
+          # exits non-zero if any anchor is missing or ambiguous.
+          python3 ./custom_patches/apply_whats_new.py
           echo "personal version ->"; grep -rn 'static let version = ' --include=SettingsView.swift .
           echo "remote pod alert ack ->"; grep -rln "acknowledgeRemotePodAlerts" --include=*.swift .
 

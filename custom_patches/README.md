@@ -26,7 +26,7 @@ so it can never conflict on a sync.
 | `loopkit-remote-pod-alert-ack.patch` | `LoopKit` | Adds `acknowledgeRemotePodAlerts()` to `RemoteActionDelegate`, with a default protocol-extension implementation so every other conformer still compiles. |
 | `nightscoutservice-remote-pod-alert-ack.patch` | `NightscoutService` | Carries the `acknowledge-pod-alerts` remote command end to end: `Action` case, `PodAlertAcknowledgeRemoteNotification`, dispatch, response `CommandType`. |
 | `loop-remote-pod-alert-ack.patch` | `Loop` | Implements it on `ServicesManager` — looks up unacknowledged Omnipod alerts, filters to the advisory allowlist, acknowledges each; **and** makes `AlertManager.acknowledgeAlert` dismiss an already-presented in-app modal. |
-| `loop-version-and-whats-new.patch` | `Loop` | Personal version (`BrianBuild.version`) plus a once-per-version What's New sheet on first launch after an update, re-openable from Settings. |
+| `apply_whats_new.py` (script, not a patch) | `Loop` | Personal version (`BrianBuild.version`) plus a once-per-version What's New sheet on first launch after an update, re-openable from Settings. |
 
 New Swift types are deliberately added **inside existing files**. A new `.swift`
 file would need an edit to the submodule's `.xcodeproj` or it simply would not be
@@ -100,6 +100,27 @@ gate shut. The personal version lives in `BrianBuild` in `Loop/Views/SettingsVie
 
 **On every release: bump `BrianBuild.version` and replace `BrianBuild.whatsNew`.** One short plain
 line per item. The build number comes from TestFlight+1 automatically; it is not in the repo.
+
+## Why What's New is a SCRIPT and not a patch
+
+It was a patch, and it failed four builds with `patch does not apply` at
+`SettingsView.swift:50` -- while the byte-identical patch applied to the byte-identical pinned
+blob locally, with the same flags. Whitespace flags were blamed twice and were not the cause.
+
+The cause: **`basal_lock`**, one of the Loop and Learn customizations run earlier in the same
+step, adds a Preferences feature that inserts `case preferences` directly after
+`case favoriteFoods` -- exactly where the patch anchored -- plus 15 more lines in that file. The
+runner's `SettingsView.swift` is 716 lines by the time the patch runs; the pinned blob is 700.
+A context diff generated against the pristine blob can never apply.
+
+Found by instrumenting the runner (`shasum`, `wc -l`, `git -C Loop diff --stat`) rather than by
+more guessing. **If a patch fails where the blob says it should not, dump the file's hash and
+line count on the runner first** -- an earlier customization is the usual answer.
+
+`CustomizationSelect.sh` is fetched live from `loopandlearn/lnl-scripts@main` and is NOT pinned,
+so its output can change again at any time. `apply_whats_new.py` therefore makes anchored
+single-string edits that do not depend on surrounding context, and exits non-zero if any anchor
+is missing or ambiguous.
 
 ## Maintenance: these patches ROT
 
