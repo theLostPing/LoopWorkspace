@@ -2,12 +2,21 @@ name: 4. Build Loop
 run-name: Build Loop (${{ github.ref_name }})
 on:
   workflow_dispatch:
-  schedule:
-    # Monthly TestFlight keep-alive rebuild of the CUSTOMIZED dev branch.
-    # Runs from MAIN (GitHub only schedules the default branch's file) but
-    # builds DEV. SCHEDULED_SYNC repo variable is 'false': never pull
-    # upstream code on a schedule - a scheduled run rebuilds the SAME code.
-    - cron: "33 7 1 * *"
+  # NO `schedule:` trigger. Removed 2026-11-03 (Brian, approved by voice).
+  #
+  # GitHub disables scheduled workflows on repos it considers inactive, and it did
+  # so to this one SIX times -- silently each time, so the monthly keep-alive simply
+  # never ran. The last schedule-triggered run was October 2025.
+  #
+  # The monthly rebuild is now driven from the house, by a cron that re-enables the
+  # workflow before dispatching it (that re-enable is the whole point):
+  #   astronas /boot/config/plugins/dynamix/loop_monthly_build.cron
+  #     -> backup/script/warden/loop_monthly_build.sh
+  #        1st of the month, 04:33 America/New_York, dispatches ref=dev.
+  # It pushes passively on success and time-sensitive if the dispatch fails, so a
+  # missed rebuild can never be silent again.
+  #
+  # Do not add `schedule:` back here without removing that cron.
 
 env:
   GH_PAT: ${{ secrets.GH_PAT }}
