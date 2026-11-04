@@ -1,58 +1,77 @@
 --- a/Loop/Managers/ServicesManager.swift
 +++ b/Loop/Managers/ServicesManager.swift
-@@ -354,6 +354,103 @@
+@@ -354,6 +354,163 @@
          }
      }
      
 +    // MARK: - Hands-free advisory pod alert acknowledgement (Brian, 2026-10-29)
 +    //
-+    // Lets an outstanding Omnipod ADVISORY alert be cleared by voice (Warden ->
-+    // Nightscout -> APNs) without unlocking the phone -- from bed, or while driving.
++    // Clears an outstanding Omnipod ADVISORY alert by voice (Warden -> Nightscout ->
++    // APNs) without unlocking the phone -- from bed, or while driving.
 +    //
-+    // This does NOT silence, suppress, delay or reconfigure any alert. Every alert
-+    // still fires exactly as it does today. This runs AFTER an alert has fired and
-+    // does what tapping the on-screen acknowledgement button does: it calls
-+    // AlertManager.acknowledgeAlert(identifier:), which forwards to the pump manager
-+    // (clearing the pod's alert slot, which stops the pod beeping), clears the iOS
-+    // notification, dismisses the in-app modal, and records the acknowledgement.
++    // This does NOT silence, suppress, delay or reconfigure any alert. Every alert still
++    // fires exactly as it does today. This runs AFTER one has fired and does what tapping
++    // the on-screen button does: the pump manager clears the pod's alert slot (which stops
++    // the pod beeping and, if the pod's confirmation beeps are on, beeps back), the iOS
++    // notification is cleared, the in-app modal is dismissed, and the acknowledgement is
++    // recorded.
 +    //
 +    // SAFETY -- the allowlist below is the entire safety property:
 +    //   * Only these four ADVISORY alerts can ever be cleared remotely.
-+    //   * Every other alert an Omnipod can raise is excluded by omission:
-+    //     suspendInProgress, suspendEnded, finishSetupReminder, unexpectedAlert,
-+    //     timeOffsetChangeDetected.
-+    //   * Pod FAULTS -- occlusion, pod fault, the real 80-hour auto-off shutdown --
-+    //     are PodCommsError.podFault and never become a PumpManagerAlert at all, so
-+    //     they are unreachable from this code path under any input. The boundary this
-+    //     method enforces is the same one the pod driver already draws between
-+    //     configurable alert slots and faults.
++    //   * Every other Omnipod alert is excluded by omission: suspendInProgress,
++    //     suspendEnded, finishSetupReminder, unexpectedAlert, timeOffsetChangeDetected.
++    //   * Pod FAULTS -- occlusion, pod fault, the real 80-hour auto-off -- are
++    //     PodCommsError.podFault and never become a PumpManagerAlert at all, so they are
++    //     unreachable from this path under any input.
 +    // Changing this list is a therapy-safety decision, not a refactor.
-+    private static let remoteAcknowledgeablePodAlertIdentifiers: Set<String> = [
++    private static let remoteAcknowledgeablePodAlertIdentifiers: [String] = [
 +        "userPodExpiration",    // slot3 -- pod expiration reminder
 +        "podExpiring",          // slot7 -- pod expired
 +        "podExpireImminent",    // slot2 -- shutdown imminent (advisory)
 +        "lowReservoir"          // slot4 -- low reservoir
 +    ]
 +
-+    // 2026-11-01 FIX. This shipped on 10/29 with a single hardcoded "Omnipod-Dash",
-+    // which matched NOTHING: this workspace builds loopandlearn/OmnipodKit (the one
-+    // merged Omnipod submodule on dev), whose OmniPumpManager.pluginIdentifier is
-+    // "Omni". The lookup always came back empty, so every remote ack answered
-+    // "No pod alerts to clear" while a Pod Expiration Reminder sat on screen.
-+    //
-+    // Query all three rather than one guess. This is safe because the REAL safety gate
-+    // is the alert-identifier allowlist above, which is byte-identical across all three
-+    // plugins -- and it makes a future submodule swap unable to silently break this.
++    // Queried in order. "Omni" is loopandlearn/OmnipodKit, which is what this workspace
++    // builds; the other two are the upstream split plugins. Shipping ONE hardcoded guess
++    // is how this feature shipped broken on 10/29.
 +    private static let omnipodManagerIdentifiers = [
-+        "Omni",          // loopandlearn/OmnipodKit -- what this workspace builds
++        "Omni",          // loopandlearn/OmnipodKit -- this workspace
 +        "Omnipod-Dash",  // LoopKit/OmniBLE
 +        "Omnipod"        // LoopKit/OmniKit
 +    ]
 +
 +    private static let repeatingAlertSuffix = "-repeating"
 +
++    /// Ask the device to clear one alert, retrying briefly: the usual failure is simply
++    /// that the pod was not reachable at that instant.
++    private func acknowledgePodAlert(_ identifier: Alert.Identifier, attempts: Int = 3) async throws {
++        var lastError: Error?
++        for attempt in 1...attempts {
++            do {
++                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
++                    alertManager.acknowledgeAlertAwaitingDevice(identifier: identifier) { error in
++                        if let error = error {
++                            continuation.resume(throwing: error)
++                        } else {
++                            continuation.resume()
++                        }
++                    }
++                }
++                return
++            } catch {
++                lastError = error
++                log.default("Pod alert ack attempt %d/%d failed for %{public}@", attempt, attempts, identifier.alertIdentifier)
++                if attempt < attempts {
++                    try? await Task.sleep(nanoseconds: 3_000_000_000)
++                }
++            }
++        }
++        throw lastError ?? PodAlertAcknowledgementError.noAcknowledgeableAlerts
++    }
++
 +    func acknowledgeRemotePodAlerts() async throws {
 +
++        // What Loop still believes is outstanding.
 +        var persistedAlerts: [PersistedAlert] = []
 +        for managerIdentifier in Self.omnipodManagerIdentifiers {
 +            let found: [PersistedAlert] = try await withCheckedThrowingContinuation { continuation in
@@ -63,11 +82,8 @@
 +            persistedAlerts.append(contentsOf: found)
 +        }
 +
-+        // An alert with a repeatInterval is issued under BOTH "<id>" and
-+        // "<id>-repeating". Acknowledge whichever are outstanding -- clearing only the
-+        // base identifier would leave the repeating notification scheduled and still
-+        // buzzing. None of the four allowlisted alerts repeats today; this keeps the
-+        // behaviour correct if upstream gives one a repeatInterval later.
++        // An alert with a repeatInterval is issued under BOTH "<id>" and "<id>-repeating";
++        // clearing only the base would leave the repeat scheduled and still buzzing.
 +        let targets = persistedAlerts.filter { persisted in
 +            let identifier = persisted.alert.identifier.alertIdentifier
 +            let base = identifier.hasSuffix(Self.repeatingAlertSuffix)
@@ -76,27 +92,71 @@
 +            return Self.remoteAcknowledgeablePodAlertIdentifiers.contains(base)
 +        }
 +
-+        guard !targets.isEmpty else {
-+            log.default("Remote pod alert acknowledgement: nothing clearable outstanding")
-+            throw PodAlertAcknowledgementError.noAcknowledgeableAlerts
++        var lastError: Error?
++
++        if !targets.isEmpty {
++            var cleared = 0
++            for target in targets {
++                do {
++                    try await acknowledgePodAlert(target.alert.identifier)
++                    cleared += 1
++                } catch {
++                    lastError = error
++                }
++            }
++            if cleared > 0 {
++                log.default("Remote pod alert acknowledgement: cleared %d", cleared)
++                return
++            }
++            throw PodAlertAcknowledgementError.podUnreachable(lastError)
 +        }
 +
-+        for target in targets {
-+            log.default("Remote pod alert acknowledgement: clearing %{public}@ (%{public}@)",
-+                        target.alert.identifier.alertIdentifier,
-+                        target.alert.identifier.managerIdentifier)
-+            alertManager.acknowledgeAlert(identifier: target.alert.identifier)
++        // REMOTE-ACK-BLIND-FALLBACK (Brian, 2026-11-04)
++        //
++        // Loop's store shows nothing outstanding, but the pod may still be beeping: any
++        // earlier ack that failed at the pod was recorded as acknowledged anyway (see
++        // AlertManager.acknowledgeAlert), which hides it from the lookup forever.
++        //
++        // So ask the pod directly to clear each ADVISORY alert. This is safe and does not
++        // widen the allowlist by one alert: OmniPumpManager.acknowledgeAlert guards on
++        // `hasActivePod && !state.activeAlerts.isEmpty` and then only acts on an
++        // identifier that is genuinely in activeAlerts -- anything else is a successful
++        // no-op. So this clears exactly what is really live on the pod, and nothing else.
++        log.default("Remote pod alert acknowledgement: store shows nothing; asking the pod directly")
++        var attempted = false
++        for managerIdentifier in Self.omnipodManagerIdentifiers {
++            for alertIdentifier in Self.remoteAcknowledgeablePodAlertIdentifiers {
++                let identifier = Alert.Identifier(managerIdentifier: managerIdentifier,
++                                                  alertIdentifier: alertIdentifier)
++                do {
++                    try await acknowledgePodAlert(identifier, attempts: 1)
++                    attempted = true
++                } catch {
++                    lastError = error
++                }
++            }
++        }
++
++        if let lastError = lastError {
++            throw PodAlertAcknowledgementError.podUnreachable(lastError)
++        }
++        guard attempted else {
++            throw PodAlertAcknowledgementError.noAcknowledgeableAlerts
 +        }
 +    }
 +
 +    enum PodAlertAcknowledgementError: LocalizedError {
 +
 +        case noAcknowledgeableAlerts
++        case podUnreachable(Error?)
 +
 +        var errorDescription: String? {
 +            switch self {
 +            case .noAcknowledgeableAlerts:
-+                return NSLocalizedString("No pod alerts to clear", comment: "Pod alert acknowledgement error description: no clearable pod alerts are outstanding.")
++                return NSLocalizedString("No pod alerts to clear", comment: "Pod alert acknowledgement error: nothing clearable is outstanding.")
++            case .podUnreachable(let underlying):
++                let detail = underlying.map { ": \($0.localizedDescription)" } ?? ""
++                return String(format: NSLocalizedString("Could not reach the pod to clear the alert%1$@", comment: "Pod alert acknowledgement error: the pod did not respond (1: underlying pod error)"), detail)
 +            }
 +        }
 +    }
@@ -106,7 +166,7 @@
          case invalidBolus
 --- a/Loop/Managers/Alerts/AlertManager.swift
 +++ b/Loop/Managers/Alerts/AlertManager.swift
-@@ -348,6 +348,26 @@
+@@ -348,6 +348,64 @@
          }
          userNotificationAlertScheduler.acknowledgeAlert(identifier: identifier)
          alertStore.recordAcknowledgement(of: identifier)
@@ -114,21 +174,59 @@
 +        // REMOTE-ACK-DISMISS-MODAL (Brian, 2026-11-01)
 +        // An alert acknowledged from OUTSIDE the UI -- the remote pod-alert ack -- can
 +        // still have its in-app modal on screen. Nothing else in this method reaches
-+        // modalAlertScheduler; only retractAlert does. Without this, a remote ack clears
-+        // the pod, the notification and the store, and the user still stares at the modal.
++        // modalAlertScheduler; only retractAlert does.
 +        //
-+        // This is a NO-OP on the normal tap path: InAppModalAlertScheduler.show() calls
++        // NO-OP on the normal tap path: InAppModalAlertScheduler.show() calls
 +        // clearPresentedAlert(identifier:) BEFORE calling back into us, so alertsPresented
 +        // no longer holds the identifier and removePresentedAlert returns at its guard.
-+        //
-+        // Main queue is REQUIRED: removePresentedAlert -> clearPresentedAlert asserts
-+        // dispatchPrecondition(condition: .onQueue(.main)).
-+        //
-+        // Deliberately NOT unscheduleAlert -- that also cancels PENDING timers, which would
-+        // break the 15-minute repeat of suspendEnded. Deliberately NOT retractAlert -- that
-+        // records a false "condition no longer applies" retraction in the alert store.
++        // Main queue is REQUIRED: clearPresentedAlert asserts dispatchPrecondition(.onQueue(.main)).
++        // NOT unscheduleAlert (cancels PENDING timers, breaking suspendEnded's 15-minute
++        // repeat) and NOT retractAlert (records a false "condition no longer applies").
 +        DispatchQueue.main.async { [weak self] in
 +            self?.modalAlertScheduler.removePresentedAlert(identifier: identifier)
++        }
++    }
++
++    /// REMOTE-ACK-AWAIT-DEVICE (Brian, 2026-11-04)
++    ///
++    /// Acknowledge an alert the way a REMOTE command has to: wait for the device to
++    /// confirm, and only record the acknowledgement if it actually succeeded.
++    ///
++    /// Why this exists. `acknowledgeAlert(identifier:)` above calls
++    /// `alertStore.recordAcknowledgement(of:)` unconditionally -- it is NOT inside the
++    /// responder's completion handler. So when the pod cannot be reached, Loop shows
++    /// "Unable To Clear Alert", the pod's alert slot is never cleared and it keeps
++    /// beeping, and yet the alert is marked acknowledged in the store. From then on it is
++    /// invisible to lookupAllUnacknowledgedUnretracted, so every later remote attempt
++    /// answers "No pod alerts to clear" while the pod is still screaming. One failed
++    /// attempt poisoned that alert permanently. That is the bug this method fixes.
++    ///
++    /// The tap path is deliberately left exactly as upstream wrote it.
++    func acknowledgeAlertAwaitingDevice(identifier: Alert.Identifier, completion: @escaping (Error?) -> Void) {
++        guard let responder = responders[identifier.managerIdentifier]?.value else {
++            // No such device loaded; nothing to clear on it.
++            completion(nil)
++            return
++        }
++        responder.acknowledgeAlert(alertIdentifier: identifier.alertIdentifier) { [weak self] error in
++            guard let self = self else {
++                completion(error)
++                return
++            }
++            if let error = error {
++                self.log.error("Remote acknowledgement of %{public}@ failed: %{public}@",
++                               identifier.alertIdentifier, String(describing: error))
++                // Deliberately NOT recorded: leaving it unacknowledged is what lets the
++                // next attempt find it again.
++                completion(error)
++                return
++            }
++            self.userNotificationAlertScheduler.acknowledgeAlert(identifier: identifier)
++            self.alertStore.recordAcknowledgement(of: identifier)
++            DispatchQueue.main.async {
++                self.modalAlertScheduler.removePresentedAlert(identifier: identifier)
++            }
++            completion(nil)
 +        }
      }
      

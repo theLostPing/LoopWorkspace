@@ -305,6 +305,8 @@ jobs:
           check 'remoteAcknowledgeablePodAlertIdentifiers' 'remote pod-alert ack (advisory allowlist)' '*.swift'
           check 'omnipodManagerIdentifiers' 'remote pod-alert ack (manager-id LIST, not one guess)' '*.swift'
           check 'REMOTE-ACK-DISMISS-MODAL' 'remote pod-alert ack (dismisses the in-app modal)' '*.swift'
+          check 'acknowledgeAlertAwaitingDevice' 'remote pod-alert ack (waits for the POD, records only on success)' '*.swift'
+          check 'REMOTE-ACK-BLIND-FALLBACK' 'remote pod-alert ack (clears a pod the store thinks is already done)' '*.swift'
           check 'BrianBuild' 'personal version number (BrianBuild)' '*.swift'
           check 'presentWhatsNewIfNeeded' 'What is New sheet on first launch after update' '*.swift'
           if grep -rq "<string>development</string>" --include="*.entitlements" . 2>/dev/null; then echo "::error::MISSING: aps-environment=production -- an entitlements file still says development (TestFlight remote-command push will break)"; fail=1; else echo "OK  : aps-environment=production (TestFlight remote-command push)"; fi
