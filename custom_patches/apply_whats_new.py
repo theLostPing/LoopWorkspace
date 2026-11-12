@@ -105,14 +105,15 @@ WHATS_NEW = '''
 enum BrianBuild {
 
     /// BUMP THIS ON EVERY RELEASE. MAJOR.MINOR.PATCH -- minor for features, patch for fixes.
-    static let version = "1.0.1"
+    static let version = "1.0.2"
 
     /// One short plain-English line per item. No jargon; engineering detail belongs in the
     /// commit message, not here.
     static let whatsNew: [String] = [
-        NSLocalizedString("Clearing a pod alert by voice now actually reaches the pod, and keeps trying if the pod is out of range.", comment: "What's New item"),
-        NSLocalizedString("If it cannot reach the pod it says so, instead of claiming there was nothing to clear.", comment: "What's New item"),
-        NSLocalizedString("Only reminders can be cleared this way. A real pod fault always stays on screen.", comment: "What's New item")
+        NSLocalizedString("Clearing a pod alert by voice now tells you the truth: if there was nothing to clear, it says so instead of saying it worked.", comment: "What's New item"),
+        NSLocalizedString("Better at staying connected to your pod, and insulin from a bolus the pod cut short is now counted correctly.", comment: "What's New item"),
+        NSLocalizedString("Your sensor reconnects more reliably after it drops out.", comment: "What's New item"),
+        NSLocalizedString("Only reminders can be cleared by voice. A real pod fault always stays on screen.", comment: "What's New item")
     ]
 
     private static let lastSeenKey = "com.thelostping.loop.lastSeenWhatsNewVersion"
@@ -228,4 +229,4 @@ extension StatusTableViewController {
 # marker is the DEFINITION, not the call we just inserted into viewDidAppear
 append(STATUS, STATUS_EXT, "func presentWhatsNewIfNeeded()", "StatusTableViewController extension")
 
-print("What's New: all edits applied (version %s)" % "1.0.1")
+print("What's New: all edits applied (version %s)" % "1.0.2")

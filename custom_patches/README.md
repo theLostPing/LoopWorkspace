@@ -132,9 +132,18 @@ Generated against these submodule pins:
 
 | Submodule | Pin the patch was generated from |
 |---|---|
-| `Loop` | `7bb17492288f6a6ea76e427277e2d82661dd0a3e` |
-| `LoopKit` | `915f58309ff61b6def4981df09dfd96e40bc50af` |
+| `Loop` | `813f07cb18bf0d31c2dbd720b68703e454d9691e` |
+| `LoopKit` | `a7b43f4d8e3cfcafe287c96303be13aff23492cd` |
 | `NightscoutService` | `2cef4896f0704fb112575ab34b596ee7de78e48d` |
+
+Re-verified against these pins on 2026-11-12 (upstream 3.14.12 sync) by actually
+running them, not by reading a file list: all three patches pass `git apply --check`;
+the three Loop and Learn customizations still resolve (`basal_lock` ->
+`dev_basal_lock.patch`); all four `sed` source strings still match, including
+`with U-100 Insulin` in OmnipodKit's `PairPodView.swift`, which was the one at real
+risk because that pin moved; and `apply_whats_new.py` was run end to end on a tree
+with the customizations already applied, because upstream changed
+`StatusTableViewController.swift` (+58/-8) and it is one of the script's two targets.
 
 **At each upstream sync**, if a `git apply` here fails, regenerate the patch against
 the new pin rather than forcing it. The drift guard in **Verify Customizations**
@@ -152,3 +161,32 @@ Nightscout remote command payload — no OTP required, matching `cancel-temporar
 
 Returns `commandType: acknowledge_pod_alerts`. If nothing clearable is outstanding it
 fails with "No pod alerts to clear" rather than reporting a false success.
+
+## 2026-11-12 (personal 1.0.2) - the outcome is now TRUTHFUL
+
+v1.0.1's blind fallback reported **success** when it had done nothing at all.
+`OmniPumpManager.acknowledgeAlert` opens with
+
+```swift
+guard self.hasActivePod, !state.activeAlerts.isEmpty else { completion(nil); return }
+```
+
+and `completion(nil)` *is* success, so a no-op was indistinguishable from a real clear.
+Warden then spoke "Told Loop to clear the pod alerts" over an HTTP 200 that only meant
+Nightscout had accepted the push. On 2026-11-11 that told Brian an alert had been cleared
+**102 seconds before it fired** - he reported a miss, and nothing had actually been broken.
+
+`REMOTE-ACK-HONEST-OUTCOME` fixes the reporting: success is claimed **only** on the
+targeted path, where Loop's store held a real unacknowledged alert and the pod confirmed
+clearing it. Otherwise it throws `noAcknowledgeableAlerts` ("No pod alerts to clear") or
+`podUnreachable`, so an outcome is always recorded and silence stops being ambiguous.
+
+Accepted trade-off, deliberately: if the pod really did still hold an alert Loop's store
+had lost, this answers "no pod alerts to clear" having silently cleared it. That is the
+safer of the two errors - the pod's own confirmation beep tells him the truth either way -
+and the store-poisoning bug that created such orphans was itself fixed in v1.0.1.
+
+**Still open (Brian's decision, NOT to be built unilaterally):** should "clear the pod
+alerts" also cover an alert that fires in the next few minutes? It would have caught the
+11/11 case, but it lets an alert sound and then clear itself seconds later, which brushes
+against his own line that alerts must still FIRE. That is a therapy-safety decision.

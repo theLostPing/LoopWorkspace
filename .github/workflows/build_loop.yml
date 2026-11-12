@@ -1,11 +1,13 @@
-name: 4. Build Loop
-run-name: Build Loop (${{ github.ref_name }})
+name: 4. Build Loop Manual
+run-name: Build Loop Manual (${{ github.ref_name }})
 on:
   workflow_dispatch:
-  schedule:
-    # Check for updates every Sunday
-    #   Later logic builds if there are updates or if it is the 2nd Sunday of the month
-    - cron: "33 7 * * 0" # Sunday at UTC 7:33
+  # NO schedule: trigger. GitHub silently disabled the scheduled workflow six
+  # times, so the monthly keep-alive never ran between Oct 2025 and Nov 2026.
+  # It is driven from the house instead: astronas cron -> loop_monthly_build.sh,
+  # which re-ENABLES the workflow first and then dispatches it via the API.
+  # Upstream restored its cron in 025c4795 (2026-11-10); this fork does NOT
+  # take that change. Brian, 2026-11-03 and again 2026-11-12.
 
 env:
   GH_PAT: ${{ secrets.GH_PAT }}
@@ -336,6 +338,7 @@ jobs:
           check 'REMOTE-ACK-DISMISS-MODAL' 'remote pod-alert ack (dismisses the in-app modal)' '*.swift'
           check 'acknowledgeAlertAwaitingDevice' 'remote pod-alert ack (waits for the POD, records only on success)' '*.swift'
           check 'REMOTE-ACK-BLIND-FALLBACK' 'remote pod-alert ack (clears a pod the store thinks is already done)' '*.swift'
+          check 'REMOTE-ACK-HONEST-OUTCOME' 'remote pod-alert ack (says nothing-to-clear instead of a false success)' '*.swift'
           check 'BrianBuild' 'personal version number (BrianBuild)' '*.swift'
           check 'presentWhatsNewIfNeeded' 'What is New sheet on first launch after update' '*.swift'
           if grep -rq "<string>development</string>" --include="*.entitlements" . 2>/dev/null; then echo "::error::MISSING: aps-environment=production -- an entitlements file still says development (TestFlight remote-command push will break)"; fail=1; else echo "OK  : aps-environment=production (TestFlight remote-command push)"; fi

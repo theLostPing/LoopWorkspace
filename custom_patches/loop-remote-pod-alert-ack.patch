@@ -1,6 +1,6 @@
 --- a/Loop/Managers/ServicesManager.swift
 +++ b/Loop/Managers/ServicesManager.swift
-@@ -354,6 +354,163 @@
+@@ -354,6 +354,180 @@
          }
      }
      
@@ -119,18 +119,16 @@
 +        //
 +        // So ask the pod directly to clear each ADVISORY alert. This is safe and does not
 +        // widen the allowlist by one alert: OmniPumpManager.acknowledgeAlert guards on
-+        // `hasActivePod && !state.activeAlerts.isEmpty` and then only acts on an
-+        // identifier that is genuinely in activeAlerts -- anything else is a successful
-+        // no-op. So this clears exactly what is really live on the pod, and nothing else.
++        // hasActivePod && !state.activeAlerts.isEmpty and then only acts on an identifier
++        // that is genuinely in activeAlerts -- anything else is a successful no-op. So
++        // this clears exactly what is really live on the pod, and nothing else.
 +        log.default("Remote pod alert acknowledgement: store shows nothing; asking the pod directly")
-+        var attempted = false
 +        for managerIdentifier in Self.omnipodManagerIdentifiers {
 +            for alertIdentifier in Self.remoteAcknowledgeablePodAlertIdentifiers {
 +                let identifier = Alert.Identifier(managerIdentifier: managerIdentifier,
 +                                                  alertIdentifier: alertIdentifier)
 +                do {
 +                    try await acknowledgePodAlert(identifier, attempts: 1)
-+                    attempted = true
 +                } catch {
 +                    lastError = error
 +                }
@@ -140,9 +138,28 @@
 +        if let lastError = lastError {
 +            throw PodAlertAcknowledgementError.podUnreachable(lastError)
 +        }
-+        guard attempted else {
-+            throw PodAlertAcknowledgementError.noAcknowledgeableAlerts
-+        }
++
++        // REMOTE-ACK-HONEST-OUTCOME (Brian, 2026-11-12)
++        //
++        // Reaching here means Loop's store held nothing clearable AND the pod raised no
++        // error. v1.0.1 reported that as SUCCESS, which was untrue. OmniPumpManager's
++        //     guard self.hasActivePod, !state.activeAlerts.isEmpty else { completion(nil); return }
++        // calls completion(nil) -- success -- when there is nothing to clear, so a no-op
++        // is indistinguishable from a real clear. Warden then said "Told Loop to clear the
++        // pod alerts" on an HTTP 200 that only meant Nightscout had accepted the push, and
++        // on 2026-11-11 he was told an alert had been cleared 102 seconds BEFORE it fired.
++        //
++        // Report the only thing actually known. Success is now claimed ONLY on the
++        // targeted path above, where Loop's store held a real unacknowledged alert and the
++        // pod confirmed clearing it. Either way an outcome is recorded, so silence stops
++        // being ambiguous.
++        //
++        // Accepted trade-off: if the pod really did still hold an alert that Loop's store
++        // had lost, this answers "No pod alerts to clear" having silently cleared it. That
++        // is the safer of the two errors -- the pod's own confirmation beep tells him the
++        // truth regardless -- and the store-poisoning bug that created such orphans was
++        // itself fixed in v1.0.1 by acknowledgeAlertAwaitingDevice.
++        throw PodAlertAcknowledgementError.noAcknowledgeableAlerts
 +    }
 +
 +    enum PodAlertAcknowledgementError: LocalizedError {
@@ -192,8 +209,8 @@
 +    /// Acknowledge an alert the way a REMOTE command has to: wait for the device to
 +    /// confirm, and only record the acknowledgement if it actually succeeded.
 +    ///
-+    /// Why this exists. `acknowledgeAlert(identifier:)` above calls
-+    /// `alertStore.recordAcknowledgement(of:)` unconditionally -- it is NOT inside the
++    /// Why this exists. acknowledgeAlert(identifier:) above calls
++    /// alertStore.recordAcknowledgement(of:) unconditionally -- it is NOT inside the
 +    /// responder's completion handler. So when the pod cannot be reached, Loop shows
 +    /// "Unable To Clear Alert", the pod's alert slot is never cleared and it keeps
 +    /// beeping, and yet the alert is marked acknowledged in the store. From then on it is
