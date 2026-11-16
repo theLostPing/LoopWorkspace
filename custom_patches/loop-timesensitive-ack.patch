@@ -1,0 +1,150 @@
+--- a/Loop/Managers/Alerts/UserNotificationAlertScheduler.swift
++++ b/Loop/Managers/Alerts/UserNotificationAlertScheduler.swift
+@@ -69,8 +69,16 @@
+         if #available(iOS 15.0, *) {
+             userNotificationContent.interruptionLevel = interruptionLevel.userNotificationInterruptLevel
+         }
+-        // TODO: Once we have a final design and approval for custom UserNotification buttons, we'll need to set categoryIdentifier
+-//        userNotificationContent.categoryIdentifier = LoopNotificationCategory.alert.rawValue
++        // ACK-BUTTON-ENABLED (Brian, 2026-11-16)
++        // Upstream wrote the whole Acknowledge button and never switched it on, behind
++        // "TODO: Once we have a final design and approval for custom UserNotification
++        // buttons". Everything it needs already exists: NotificationManager registers
++        // LoopNotificationCategory.alert carrying Action.acknowledgeAlert, and
++        // LoopAppManager handles that response. Setting the category was the only
++        // missing piece, so an alert notification now carries a button he can hit from
++        // the Lock Screen -- or hear read out by Announce Notifications in the car --
++        // without unlocking the phone.
++        userNotificationContent.categoryIdentifier = LoopNotificationCategory.alert.rawValue
+         userNotificationContent.threadIdentifier = identifier.value // Used to match categoryIdentifier, but I /think/ we want multiple threads for multiple alert types, no?
+         userNotificationContent.userInfo = [
+             LoopNotificationUserInfoKey.managerIDForAlert.rawValue: identifier.managerIdentifier,
+@@ -106,7 +114,26 @@
+         case .timeSensitive:
+             return .timeSensitive
+         case .active:
+-            return .active
++            // TIMESENSITIVE-NONCRITICAL (Brian, 2026-11-16)
++            // Non-critical device alerts -- low reservoir, pump issues, sensor expiry --
++            // arrive as .active, which iOS is free to hold back under Do Not Disturb or
++            // Driving Focus. That is what was swallowing them in the car. .timeSensitive
++            // breaks through Focus and is eligible for Announce Notifications.
++            //
++            // This is an UPGRADE ONLY and the safety property is structural: .critical
++            // and .timeSensitive are returned unchanged above, so no alert can ever be
++            // made quieter by this. Loop's urgent alarms stay Critical.
++            //
++            // Deliberately done at this single choke point rather than by matching pump
++            // and CGM manager identifiers. It therefore covers every non-critical Loop
++            // notice, not only device ones -- slightly broader than asked, and the right
++            // trade: hardcoding a manager id is exactly what shipped the pod-alert ack
++            // broken on 2026-10-29.
++            //
++            // Loop.entitlements already carries
++            // com.apple.developer.usernotifications.time-sensitive (upstream ships it),
++            // so iOS honours this. Nothing had to be added for it.
++            return .timeSensitive
+         }
+     }
+ }
+--- a/Loop/Managers/NotificationManager.swift
++++ b/Loop/Managers/NotificationManager.swift
+@@ -36,10 +36,18 @@
+             options: []
+         ))
+         
++        // ACK-BUTTON-BACKGROUND (Brian, 2026-11-16)
++        // Mirrors Warden's Approve/Deny buttons, which are the HA Companion pattern: a
++        // registered category whose tap is handled WITHOUT bringing the app forward.
++        // Upstream used .foreground here, which would force the phone open to
++        // acknowledge -- the opposite of the point, which is clearing a reminder from
++        // the Lock Screen while driving. No .authenticationRequired either, for the
++        // same reason. Loop already runs continuously in the background, so the handler
++        // is alive to talk to the pod.
+         let acknowledgeAlertAction = UNNotificationAction(
+             identifier: Action.acknowledgeAlert.rawValue,
+-            title: NSLocalizedString("OK", comment: "The title of the notification action to acknowledge a device alert"),
+-            options: .foreground
++            title: NSLocalizedString("Acknowledge", comment: "The title of the notification action to acknowledge a device alert"),
++            options: []
+         )
+         
+         categories.append(UNNotificationCategory(
+@@ -128,6 +136,10 @@
+ 
+         notification.body = body
+         notification.sound = .default
++        // TIMESENSITIVE-REMOTE (Brian, 2026-11-16): a remote bolus or carb entry he sent
++        // from somewhere else is time sensitive by definition -- he needs to know it
++        // landed, or did not, while he can still act on it. Breaks through Focus.
++        notification.interruptionLevel = .timeSensitive
+ 
+         let request = UNNotificationRequest(
+             identifier: LoopNotificationCategory.remoteBolus.rawValue,
+@@ -149,6 +161,10 @@
+         notification.title =  String(format: NSLocalizedString("Remote Bolus Entry: %@ U", comment: "The notification title for a remote failure. (1: Bolus amount)"), amountDescription)
+         notification.body = error.localizedDescription
+         notification.sound = .default
++        // TIMESENSITIVE-REMOTE (Brian, 2026-11-16): a remote bolus or carb entry he sent
++        // from somewhere else is time sensitive by definition -- he needs to know it
++        // landed, or did not, while he can still act on it. Breaks through Focus.
++        notification.interruptionLevel = .timeSensitive
+ 
+         let request = UNNotificationRequest(
+             identifier: LoopNotificationCategory.remoteBolusFailure.rawValue,
+@@ -170,6 +186,10 @@
+ 
+         notification.body = body
+         notification.sound = .default
++        // TIMESENSITIVE-REMOTE (Brian, 2026-11-16): a remote bolus or carb entry he sent
++        // from somewhere else is time sensitive by definition -- he needs to know it
++        // landed, or did not, while he can still act on it. Breaks through Focus.
++        notification.interruptionLevel = .timeSensitive
+ 
+         let request = UNNotificationRequest(
+             identifier: LoopNotificationCategory.remoteCarbs.rawValue,
+@@ -191,6 +211,10 @@
+         
+         notification.body = body
+         notification.sound = .default
++        // TIMESENSITIVE-REMOTE (Brian, 2026-11-16): a remote bolus or carb entry he sent
++        // from somewhere else is time sensitive by definition -- he needs to know it
++        // landed, or did not, while he can still act on it. Breaks through Focus.
++        notification.interruptionLevel = .timeSensitive
+ 
+         let request = UNNotificationRequest(
+             identifier: LoopNotificationCategory.remoteCarbsFailure.rawValue,
+--- a/Loop/Managers/LoopAppManager.swift
++++ b/Loop/Managers/LoopAppManager.swift
+@@ -593,10 +593,29 @@
+                 return
+             }
+         case NotificationManager.Action.acknowledgeAlert.rawValue:
++            // ACK-BUTTON-AWAITS-DEVICE (Brian, 2026-11-16)
++            //
++            // Routed through acknowledgeAlertAwaitingDevice, NOT upstream's
++            // acknowledgeAlert. The latter calls alertStore.recordAcknowledgement
++            // OUTSIDE the responder's completion handler, so a tap taken while the pod
++            // is out of range marks the alert acknowledged even though the pod never
++            // cleared it -- and it then stays invisible to every later attempt. That is
++            // the poisoning bug found on 2026-11-04, and a button pressed from a moving
++            // car is exactly when the pod is least likely to answer.
++            //
++            // completionHandler must be called on the async path or iOS reports the
++            // response as never handled; falling through to the shared call at the end
++            // of this method would fire it before the pod replied.
+             let userInfo = response.notification.request.content.userInfo
+             if let alertIdentifier = userInfo[LoopNotificationUserInfoKey.alertTypeID.rawValue] as? Alert.AlertIdentifier,
+-               let managerIdentifier = userInfo[LoopNotificationUserInfoKey.managerIDForAlert.rawValue] as? String {
+-                alertManager?.acknowledgeAlert(identifier: Alert.Identifier(managerIdentifier: managerIdentifier, alertIdentifier: alertIdentifier))
++               let managerIdentifier = userInfo[LoopNotificationUserInfoKey.managerIDForAlert.rawValue] as? String,
++               let alertManager = alertManager {
++                alertManager.acknowledgeAlertAwaitingDevice(identifier: Alert.Identifier(managerIdentifier: managerIdentifier, alertIdentifier: alertIdentifier)) { _ in
++                    DispatchQueue.main.async {
++                        completionHandler()
++                    }
++                }
++                return
+             }
+         case UNNotificationDefaultActionIdentifier:
+             guard response.notification.request.identifier == LoopNotificationCategory.missedMeal.rawValue else {

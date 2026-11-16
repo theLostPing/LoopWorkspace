@@ -105,15 +105,16 @@ WHATS_NEW = '''
 enum BrianBuild {
 
     /// BUMP THIS ON EVERY RELEASE. MAJOR.MINOR.PATCH -- minor for features, patch for fixes.
-    static let version = "1.0.2"
+    static let version = "1.1.0"
 
     /// One short plain-English line per item. No jargon; engineering detail belongs in the
     /// commit message, not here.
     static let whatsNew: [String] = [
-        NSLocalizedString("Clearing a pod alert by voice now tells you the truth: if there was nothing to clear, it says so instead of saying it worked.", comment: "What's New item"),
-        NSLocalizedString("Better at staying connected to your pod, and insulin from a bolus the pod cut short is now counted correctly.", comment: "What's New item"),
-        NSLocalizedString("Your sensor reconnects more reliably after it drops out.", comment: "What's New item"),
-        NSLocalizedString("Only reminders can be cleared by voice. A real pod fault always stays on screen.", comment: "What's New item")
+        NSLocalizedString("Fixed a sensor change from the last update that was making Loop miss readings.", comment: "What's New item"),
+        NSLocalizedString("Pod and sensor reminders now get through Do Not Disturb and Driving Focus.", comment: "What's New item"),
+        NSLocalizedString("You can clear a reminder straight from the notification, without unlocking your phone.", comment: "What's New item"),
+        NSLocalizedString("Remote bolus and carb entries now let you know the same way.", comment: "What's New item"),
+        NSLocalizedString("Urgent alarms are untouched. They were always loud and still are.", comment: "What's New item")
     ]
 
     private static let lastSeenKey = "com.thelostping.loop.lastSeenWhatsNewVersion"
@@ -229,4 +230,4 @@ extension StatusTableViewController {
 # marker is the DEFINITION, not the call we just inserted into viewDidAppear
 append(STATUS, STATUS_EXT, "func presentWhatsNewIfNeeded()", "StatusTableViewController extension")
 
-print("What's New: all edits applied (version %s)" % "1.0.2")
+print("What's New: all edits applied (version %s)" % "1.1.0")

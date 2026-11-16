@@ -299,6 +299,10 @@ jobs:
           git apply --directory=LoopKit           -v --whitespace=nowarn --ignore-whitespace ./custom_patches/loopkit-remote-pod-alert-ack.patch
           git apply --directory=NightscoutService -v --whitespace=nowarn --ignore-whitespace ./custom_patches/nightscoutservice-remote-pod-alert-ack.patch
           git apply --directory=Loop              -v --whitespace=nowarn --ignore-whitespace ./custom_patches/loop-remote-pod-alert-ack.patch
+          # Time Sensitive notices + the Acknowledge button. Applied AFTER the pod-ack
+          # patch because its notification handler calls acknowledgeAlertAwaitingDevice,
+          # which that patch adds to AlertManager. Different files, so no conflict.
+          git apply --directory=Loop              -v --whitespace=nowarn --ignore-whitespace ./custom_patches/loop-timesensitive-ack.patch
 
           # === Personal version number + What's New sheet (Brian 2026-11-01) ===
           # Standing rule: every release gets a real user-visible version AND a once-per-version
@@ -339,6 +343,12 @@ jobs:
           check 'acknowledgeAlertAwaitingDevice' 'remote pod-alert ack (waits for the POD, records only on success)' '*.swift'
           check 'REMOTE-ACK-BLIND-FALLBACK' 'remote pod-alert ack (clears a pod the store thinks is already done)' '*.swift'
           check 'REMOTE-ACK-HONEST-OUTCOME' 'remote pod-alert ack (says nothing-to-clear instead of a false success)' '*.swift'
+          check 'TIMESENSITIVE-NONCRITICAL' 'non-critical alerts lifted to Time Sensitive (never downgraded)' '*.swift'
+          check 'TIMESENSITIVE-REMOTE' 'remote bolus/carb notices are Time Sensitive' '*.swift'
+          check 'ACK-BUTTON-ENABLED' 'Acknowledge button switched on (categoryIdentifier set)' '*.swift'
+          check 'ACK-BUTTON-BACKGROUND' 'Acknowledge button handled without unlocking (no .foreground)' '*.swift'
+          check 'ACK-BUTTON-AWAITS-DEVICE' 'Acknowledge button waits for the pod (no poisoning)' '*.swift'
+          check 'com.apple.developer.usernotifications.time-sensitive' 'Time Sensitive entitlement present (upstream ships it)' '*.entitlements'
           check 'BrianBuild' 'personal version number (BrianBuild)' '*.swift'
           check 'presentWhatsNewIfNeeded' 'What is New sheet on first launch after update' '*.swift'
           if grep -rq "<string>development</string>" --include="*.entitlements" . 2>/dev/null; then echo "::error::MISSING: aps-environment=production -- an entitlements file still says development (TestFlight remote-command push will break)"; fail=1; else echo "OK  : aps-environment=production (TestFlight remote-command push)"; fi

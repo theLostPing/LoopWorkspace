@@ -26,6 +26,7 @@ so it can never conflict on a sync.
 | `loopkit-remote-pod-alert-ack.patch` | `LoopKit` | Adds `acknowledgeRemotePodAlerts()` to `RemoteActionDelegate`, with a default protocol-extension implementation so every other conformer still compiles. |
 | `nightscoutservice-remote-pod-alert-ack.patch` | `NightscoutService` | Carries the `acknowledge-pod-alerts` remote command end to end: `Action` case, `PodAlertAcknowledgeRemoteNotification`, dispatch, response `CommandType`. |
 | `loop-remote-pod-alert-ack.patch` | `Loop` | Implements it on `ServicesManager` — looks up unacknowledged Omnipod alerts, filters to the advisory allowlist, acknowledges each; **and** makes `AlertManager.acknowledgeAlert` dismiss an already-presented in-app modal. |
+| `loop-timesensitive-ack.patch` | `Loop` | Lifts non-critical alerts to Time Sensitive (upgrade only), switches on the Acknowledge notification button upstream left commented out, makes the four remote bolus/carb notices Time Sensitive, and routes the button through `acknowledgeAlertAwaitingDevice`. |
 | `apply_whats_new.py` (script, not a patch) | `Loop` | Personal version (`BrianBuild.version`) plus a once-per-version What's New sheet on first launch after an update, re-openable from Settings. |
 
 New Swift types are deliberately added **inside existing files**. A new `.swift`
@@ -150,6 +151,55 @@ the new pin rather than forcing it. The drift guard in **Verify Customizations**
 (`acknowledgeRemotePodAlerts`, `acknowledge-pod-alerts`,
 `remoteAcknowledgeablePodAlertIdentifiers`) is the backstop that catches a patch that
 applied only partially.
+
+## 2026-11-16 (personal 1.1.0) - Time Sensitive + the Acknowledge button
+
+Three voice actions, each approved with Face ID from the car
+(`a-77b8d4891a1e1891334eb5c3`, `a-63c58eadfc4cabde345d7b74`,
+`a-5e2091207c70212f97ee952f`).
+
+**The entitlement was already there.** `com.apple.developer.usernotifications.time-sensitive`
+ships in upstream `Loop.entitlements` and was already in build 27. Nothing was added
+and no App ID capability was changed - the `identifiers` lane in `fastlane/Fastfile`
+does not manage one, and does not need to. Loop simply never *used* `.timeSensitive`.
+There is now a drift guard asserting the entitlement is present, so if upstream ever
+drops it the build fails loudly rather than shipping notices iOS will quietly demote.
+
+**CarPlay: this does NOT put Loop in the CarPlay bottom bar, and cannot.** Only
+Apple's Reminders, News and Home break through to the CarPlay screen from their
+iPhone counterparts; the per-app *Show in CarPlay* toggle exists only for those and
+for apps that are themselves CarPlay apps. Loop has no CarPlay entitlement or scene,
+and Apple grants that only to specific app categories. What this build does buy:
+breaking through Focus/Driving Focus, eligibility for **Announce Notifications** (Siri
+reads them aloud through CarPlay - the real hands-free path), and acknowledging from
+the Lock Screen without unlocking.
+
+**The Acknowledge button was 95% upstream already.** `Action.acknowledgeAlert`, the
+`LoopNotificationCategory.alert` category and the handler at `LoopAppManager.swift`
+all existed; `UserNotificationAlertScheduler.swift` just never set
+`categoryIdentifier`, behind *"TODO: Once we have a final design and approval for
+custom UserNotification buttons"*. This switches it on.
+
+Two deliberate departures from upstream:
+
+* **`options: []` instead of `.foreground`.** Mirrors Warden's Approve/Deny, which are
+  the HA Companion pattern and handle the tap in the background. `.foreground` would
+  force the phone open, defeating the entire point.
+* **Routed through `acknowledgeAlertAwaitingDevice`, not `acknowledgeAlert`.** The
+  upstream call records the acknowledgement outside the responder's completion
+  handler, so a tap taken with the pod out of range marks the alert done though the
+  pod never cleared it - the poisoning bug of 2026-11-04. A button pressed from a
+  moving car is precisely when the pod is least likely to answer.
+
+**Never downgrades.** The `.active -> .timeSensitive` lift happens in one place, and
+`.critical` and `.timeSensitive` return unchanged, so no alert can be made quieter.
+It is done at that choke point rather than by matching pump/CGM manager identifiers,
+so it covers every non-critical Loop notice - slightly broader than "device alerts",
+and the right trade, because hardcoding a manager id is exactly what shipped the pod
+ack broken on 2026-10-29.
+
+Scope note: Loop has **no** remote *override* notification - only remote bolus and
+carbs plus their two failure notices. All four are now Time Sensitive.
 
 ## Wire format
 
